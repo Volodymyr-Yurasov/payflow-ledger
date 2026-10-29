@@ -1,0 +1,138 @@
+{
+  "happy_path": {
+    "acc_1": {
+      "balance": {
+        "available": "585.00",
+        "pending": "15.00"
+      },
+      "transactions": {
+        "auth_100": [
+          "captured",
+          "125.50",
+          "125.50",
+          "25.50"
+        ],
+        "auth_101": [
+          "reversed",
+          "40.00",
+          "0.00",
+          "0.00"
+        ],
+        "auth_102": [
+          "captured",
+          "300.00",
+          "300.00",
+          "0.00"
+        ],
+        "auth_103": [
+          "pending",
+          "15.00",
+          "0.00",
+          "0.00"
+        ]
+      }
+    }
+  },
+  "out_of_order": {
+    "acc_ooo": {
+      "balance": {
+        "available": "585.00",
+        "pending": "15.00"
+      },
+      "transactions": {
+        "auth_ooo_100": [
+          "captured",
+          "125.50",
+          "125.50",
+          "25.50"
+        ],
+        "auth_ooo_101": [
+          "reversed",
+          "40.00",
+          "0.00",
+          "0.00"
+        ],
+        "auth_ooo_102": [
+          "captured",
+          "300.00",
+          "300.00",
+          "0.00"
+        ],
+        "auth_ooo_103": [
+          "pending",
+          "15.00",
+          "0.00",
+          "0.00"
+        ]
+      }
+    }
+  },
+  "duplicates": {
+    "acc_dup": {
+      "balance": {
+        "available": "585.00",
+        "pending": "15.00"
+      },
+      "transactions": {
+        "auth_dup_100": [
+          "captured",
+          "125.50",
+          "125.50",
+          "25.50"
+        ],
+        "auth_dup_101": [
+          "reversed",
+          "40.00",
+          "0.00",
+          "0.00"
+        ],
+        "auth_dup_102": [
+          "captured",
+          "300.00",
+          "300.00",
+          "0.00"
+        ],
+        "auth_dup_103": [
+          "pending",
+          "15.00",
+          "0.00",
+          "0.00"
+        ]
+      }
+    }
+  },
+  "edge_cases": {
+    "acc_edge": {
+      "balance": {
+        "available": "356.25",
+        "pending": "20.00"
+      },
+      "transactions": {
+        "auth_e1": [
+          "captured",
+          "50.00",
+          "58.75",
+          "0.00"
+        ],
+        "auth_e2": [
+          "captured",
+          "100.00",
+          "80.00",
+          "15.00"
+        ],
+        "auth_e3": [
+          "pending",
+          "20.00",
+          "0.00",
+          "0.00"
+        ],
+        "auth_e4": [
+          "reversed",
+          "30.00",
+          "0.00",
+          "0.00"
+        ]
+      }
+    }
+  }
+}
