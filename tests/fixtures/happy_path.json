@@ -1,0 +1,56 @@
+[
+  {
+    "id": "evt_0001",
+    "type": "account.funded",
+    "created_at": "2026-10-19T10:00:00Z",
+    "data": {"account_id": "acc_1", "amount": "1000.00", "currency": "USD"}
+  },
+  {
+    "id": "evt_0002",
+    "type": "authorization.created",
+    "created_at": "2026-10-19T10:01:00Z",
+    "data": {"account_id": "acc_1", "authorization_id": "auth_100", "amount": "125.50", "currency": "USD", "merchant": "AWS"}
+  },
+  {
+    "id": "evt_0003",
+    "type": "authorization.created",
+    "created_at": "2026-10-19T10:02:00Z",
+    "data": {"account_id": "acc_1", "authorization_id": "auth_101", "amount": "40.00", "currency": "USD", "merchant": "Uber"}
+  },
+  {
+    "id": "evt_0004",
+    "type": "authorization.captured",
+    "created_at": "2026-10-19T10:05:00Z",
+    "data": {"account_id": "acc_1", "authorization_id": "auth_100", "amount": "125.50", "currency": "USD"}
+  },
+  {
+    "id": "evt_0005",
+    "type": "authorization.created",
+    "created_at": "2026-10-19T10:10:00Z",
+    "data": {"account_id": "acc_1", "authorization_id": "auth_102", "amount": "300.00", "currency": "USD", "merchant": "Hilton"}
+  },
+  {
+    "id": "evt_0006",
+    "type": "authorization.reversed",
+    "created_at": "2026-10-19T10:12:00Z",
+    "data": {"account_id": "acc_1", "authorization_id": "auth_101", "amount": "40.00", "currency": "USD"}
+  },
+  {
+    "id": "evt_0007",
+    "type": "authorization.captured",
+    "created_at": "2026-10-19T11:00:00Z",
+    "data": {"account_id": "acc_1", "authorization_id": "auth_102", "amount": "300.00", "currency": "USD"}
+  },
+  {
+    "id": "evt_0008",
+    "type": "refund.created",
+    "created_at": "2026-10-19T12:00:00Z",
+    "data": {"account_id": "acc_1", "refund_id": "re_500", "authorization_id": "auth_100", "amount": "25.50", "currency": "USD"}
+  },
+  {
+    "id": "evt_0009",
+    "type": "authorization.created",
+    "created_at": "2026-10-19T12:30:00Z",
+    "data": {"account_id": "acc_1", "authorization_id": "auth_103", "amount": "15.00", "currency": "USD", "merchant": "Slack"}
+  }
+]
