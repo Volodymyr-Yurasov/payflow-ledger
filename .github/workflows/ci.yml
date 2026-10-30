@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff==0.8.4
+      - run: ruff check .
+
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose --profile test run --rm tests
+      - if: always()
+        run: docker compose --profile test down -v
+
+  e2e:
+    # Starts the service with the one command the assignment requires, then replays
+    # every scenario through PayFlow's own sender and checks the results.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: docker compose up -d --build --wait
+      - run: git clone --depth 1 https://github.com/mekasp/PayFlow.git ../PayFlow
+      - run: python scripts/e2e.py --sender ../PayFlow/PayFlowEventsSender.py
+      - if: failure()
+        run: docker compose logs app
+      - if: always()
+        run: docker compose down -v
