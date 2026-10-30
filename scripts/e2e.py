@@ -1,11 +1,7 @@
-"""End-to-end check against a running service, using PayFlow's own sender script.
+"""End-to-end check against a running service. See README.md for how to run it.
 
-    docker compose up -d
-    git clone https://github.com/mekasp/PayFlow.git ../PayFlow
-    python scripts/e2e.py --sender ../PayFlow/PayFlowEventsSender.py
-
-Delivers tests/fixtures/happy_path.json and every scenario in scenarios/ through the real
-sender (signed, with retries), then checks balances and transactions against
+Delivers tests/fixtures/happy_path.json and every scenario in scenarios/ through the
+given sender script (signed, with retries), then checks balances and transactions against
 scenarios/expected.json. Each scenario uses its own account, so the script is safe to
 run repeatedly: re-delivery must not change anything (idempotency).
 Standard library only.
@@ -59,7 +55,7 @@ def check_account(base_url: str, account_id: str, expected: dict) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--sender", required=True, help="path to PayFlowEventsSender.py")
+    parser.add_argument("--sender", required=True, help="path to the event sender script")
     parser.add_argument("--base-url", default="http://localhost:8000")
     parser.add_argument("--rounds", type=int, default=2,
                         help="deliver every scenario this many times (idempotency)")

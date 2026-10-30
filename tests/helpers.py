@@ -40,7 +40,7 @@ EXPECTED_TRANSACTIONS = [
 
 
 def encode(event: dict[str, Any]) -> bytes:
-    """Serialize the way PayFlowEventsSender.py does."""
+    """Compact JSON, UTF-8, keys in insertion order."""
     return json.dumps(event, separators=(",", ":"), ensure_ascii=False).encode()
 
 
