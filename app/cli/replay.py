@@ -13,8 +13,9 @@ events_cli = AppGroup("events", help="Inspect and replay stored webhook events."
     "--status",
     "statuses",
     multiple=True,
-    type=click.Choice([EventStatus.REJECTED, EventStatus.IGNORED]),
-    default=[EventStatus.REJECTED],
+    # Plain values: click matches Enum choices by member name, not by value.
+    type=click.Choice([EventStatus.REJECTED.value, EventStatus.IGNORED.value]),
+    default=[EventStatus.REJECTED.value],
     show_default=True,
     help="Which stored events to re-apply (repeatable).",
 )

@@ -10,7 +10,7 @@ from app.services.handlers.common import Rejected, lock_account
 log = logging.getLogger(__name__)
 
 
-def apply(session: Session, event: Event[RefundCreatedData]) -> str:
+def apply(session: Session, event: Event[RefundCreatedData]) -> EventStatus:
     data = event.data
     account = lock_account(session, data.account_id, data.currency)
 

@@ -8,6 +8,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.models import EventStatus
 from app.schemas.events import (
     AccountFundedData,
     AuthorizationCapturedData,
@@ -29,8 +30,8 @@ from app.services.handlers.common import Rejected
 @dataclass(frozen=True)
 class Handler:
     data_model: type
-    # Returns the resulting EventStatus (APPLIED or NOOP), or raises Rejected.
-    apply: Callable[[Session, Event[Any]], str]
+    # Returns APPLIED or NOOP, or raises Rejected.
+    apply: Callable[[Session, Event[Any]], EventStatus]
 
 
 HANDLERS: dict[str, Handler] = {

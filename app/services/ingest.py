@@ -122,7 +122,7 @@ class IngestService:
         return _OUTCOME_BY_STATUS[status]
 
 
-def apply_event(session: Session, payload: dict[str, Any]) -> tuple[str, str | None]:
+def apply_event(session: Session, payload: dict[str, Any]) -> tuple[EventStatus, str | None]:
     """Apply one stored event to the ledger. Returns (EventStatus, error reason).
 
     Shared by live ingestion and the replay command.

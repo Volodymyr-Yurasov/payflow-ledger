@@ -10,7 +10,7 @@ from app.services.handlers.common import (
 )
 
 
-def apply(session: Session, event: Event[AuthorizationCreatedData]) -> str:
+def apply(session: Session, event: Event[AuthorizationCreatedData]) -> EventStatus:
     data = event.data
     account = lock_account(session, data.account_id, data.currency)
     auth = load_authorization(session, account, data.authorization_id, event.created_at)

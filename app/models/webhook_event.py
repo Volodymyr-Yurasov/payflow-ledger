@@ -1,3 +1,4 @@
+import enum
 from datetime import datetime
 from typing import Any
 
@@ -8,7 +9,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base
 
 
-class EventStatus:
+class EventStatus(enum.StrEnum):
+    """Stored as plain TEXT: StrEnum members are str, so they compare and bind as-is."""
+
     RECEIVED = "received"  # only ever visible inside the claiming transaction
     APPLIED = "applied"
     NOOP = "noop"  # semantic duplicate (same fact under a new event id): stored, changed nothing

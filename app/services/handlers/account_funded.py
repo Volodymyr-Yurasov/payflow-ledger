@@ -5,7 +5,7 @@ from app.schemas.events import AccountFundedData, Event
 from app.services.handlers.common import lock_account
 
 
-def apply(session: Session, event: Event[AccountFundedData]) -> str:
+def apply(session: Session, event: Event[AccountFundedData]) -> EventStatus:
     data = event.data
     account = lock_account(session, data.account_id, data.currency)
     session.add(
