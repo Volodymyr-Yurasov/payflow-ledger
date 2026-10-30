@@ -1,16 +1,19 @@
+# Every ${VAR:-default} below can be overridden from a `.env` file next to this one
+# (gitignored; see .env.example). Without a .env, the defaults are the local/test values,
+# so `docker compose up` works as is.
 services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: payflow
-      POSTGRES_PASSWORD: payflow
-      POSTGRES_DB: payflow
+      POSTGRES_USER: ${POSTGRES_USER:-payflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-payflow}
+      POSTGRES_DB: ${POSTGRES_DB:-payflow}
     volumes:
       - pgdata:/var/lib/postgresql/data
       # Creates the separate payflow_test database used by the test suite.
       - ./docker/postgres:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U payflow -d payflow"]
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 2s
       timeout: 3s
       retries: 30
@@ -34,9 +37,9 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql+psycopg://payflow:payflow@db:5432/payflow
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-payflow}:${POSTGRES_PASSWORD:-payflow}@db:5432/${POSTGRES_DB:-payflow}
       REDIS_URL: redis://redis:6379/0
-      PAYFLOW_WEBHOOK_SECRET: whsec_test_123
+      PAYFLOW_WEBHOOK_SECRET: ${PAYFLOW_WEBHOOK_SECRET:-whsec_test_123}
     depends_on:
       db:
         condition: service_healthy
@@ -54,9 +57,10 @@ services:
       context: .
       target: test
     environment:
-      DATABASE_URL: postgresql+psycopg://payflow:payflow@db:5432/payflow_test
+      # Separate database and Redis DB: the test suite never touches the service's data.
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-payflow}:${POSTGRES_PASSWORD:-payflow}@db:5432/payflow_test
       REDIS_URL: redis://redis:6379/15
-      PAYFLOW_WEBHOOK_SECRET: whsec_test_123
+      PAYFLOW_WEBHOOK_SECRET: ${PAYFLOW_WEBHOOK_SECRET:-whsec_test_123}
     depends_on:
       db:
         condition: service_healthy

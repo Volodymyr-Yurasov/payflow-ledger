@@ -18,7 +18,11 @@ Stack: Python 3.12, Flask, PostgreSQL 16 (SQLAlchemy 2 + Alembic), Redis 7, guni
 docker compose up                # Postgres + Redis + app on http://localhost:8000
 ```
 
-Migrations run automatically on start. Check it with PayFlow's sender:
+Migrations run automatically on start.
+
+**Configuration and secrets.** The webhook secret and the Postgres credentials are read from environment variables. `docker-compose.yml` gives each one a default (`${VAR:-default}`) with the local/test values, including PayFlow's published test secret `whsec_test_123`. That's only so the service starts with one command, as the assignment asks. Normally these values would live only in a gitignored `.env` (or a secret manager), and the compose file would have no defaults. [`.env.example`](.env.example) lists the variables. To override them: `cp .env.example .env`, edit it, and `.env` wins over the defaults.
+
+Check it with PayFlow's sender:
 
 ```bash
 git clone https://github.com/mekasp/PayFlow.git ../PayFlow
@@ -172,7 +176,7 @@ PayFlow retries anything non-2xx for 72h, so status codes are chosen with that i
 
 ## 5. Before production I would
 
-1. **Manage secrets properly.** Keep the webhook secret in a secret manager and support **two active secrets** for rotation. Ask PayFlow for a **timestamp in the signature** to block replays of old signed requests.
+1. **Manage secrets properly.** Remove the defaults from `docker-compose.yml` and make the variables required (`${VAR:?}`), so nothing starts with test credentials. Keep the webhook secret in a secret manager and support **two active secrets** for rotation. Ask PayFlow for a **timestamp in the signature** to block replays of old signed requests.
 2. **Add observability.** Metrics for events by outcome, latency, 409/503 rates and Redis breaker state. Alerts on any quarantined event, on refunds exceeding captures, and on anomalies such as a capture after a reversal.
 3. **Reconcile.** Run a periodic job comparing our balances with PayFlow's API, if one exists. Webhooks alone can't prove we missed nothing.
 4. **Scale the write path when needed.** Add an inbox table plus workers (ack fast, apply asynchronously, partitioned by account to keep per-account ordering cheap). Also keep materialized balance counters instead of `SUM` on every read.
