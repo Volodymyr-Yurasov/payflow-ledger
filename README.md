@@ -1,186 +1,220 @@
 # PayFlow Ledger
 
-A Flask service that receives PayFlow card webhooks and keeps per-account accounting:
-how much is funded, blocked (pending), spent (captured) and refunded.
+Сервіс на Flask, який приймає webhooks від PayFlow про операції по корпоративних картках
+і веде облік по рахунках: скільки поповнено, заблоковано (pending), списано (captured)
+і повернуто (refunded).
 
-- `POST /webhooks`: receives signed PayFlow events.
-- `GET /accounts/{account_id}/balance`: `available` and `pending`.
-- `GET /accounts/{account_id}/transactions`: authorizations with their current state.
-- `GET /health`: database check, plus Redis status (informational).
+| Endpoint | Призначення |
+|---|---|
+| `POST /webhooks` | Приймає підписані події від PayFlow |
+| `GET /accounts/{account_id}/balance` | `available` і `pending` |
+| `GET /accounts/{account_id}/transactions` | Авторизації з їхнім поточним станом |
+| `GET /health` | Перевірка бази даних і стан Redis (інформаційно) |
 
-Stack: Python 3.12, Flask, PostgreSQL 16 (SQLAlchemy 2 + Alembic), Redis 7, gunicorn.
+**Стек:** Python 3.12, Flask, PostgreSQL 16 (SQLAlchemy 2, Alembic), Redis 7, gunicorn, Docker Compose.
+
+**Коротко:** кожна подія застосовується рівно один раз, у будь-якому порядку доставки,
+при паралельній доставці й спамі, а сервіс лишається коректним, коли Redis недоступний.
+Кожну з цих властивостей підтверджує тест (127 тестів, покриття близько 98%), а CI перевіряє
+їх при кожному push.
 
 ---
 
-## 1. Running the service and the tests
+## 1. Як запустити сервіс і тести
+
+### Сервіс
 
 ```bash
-docker compose up                # Postgres + Redis + app on http://localhost:8000
+docker compose up        # Postgres + Redis + застосунок на http://localhost:8000
 ```
 
-Migrations run automatically on start.
-
-**Configuration and secrets.** The webhook secret and the Postgres credentials are read from environment variables. `docker-compose.yml` gives each one a default (`${VAR:-default}`) with the local/test values, including PayFlow's published test secret `whsec_test_123`. That's only so the service starts with one command, as the assignment asks. Normally these values would live only in a gitignored `.env` (or a secret manager), and the compose file would have no defaults. [`.env.example`](.env.example) lists the variables. To override them: `cp .env.example .env`, edit it, and `.env` wins over the defaults.
-
-Check it with PayFlow's sender:
+Міграції запускаються автоматично під час старту. Перевірка відправником PayFlow:
 
 ```bash
 git clone https://github.com/mekasp/PayFlow.git ../PayFlow
 python ../PayFlow/PayFlowEventsSender.py ../PayFlow/happy_path.json
 curl localhost:8000/accounts/acc_1/balance
 # {"account_id":"acc_1","currency":"USD","available":"585.00","pending":"15.00"}
+curl localhost:8000/accounts/acc_1/transactions
 ```
 
-**Tests** (against real Postgres and Redis, in a separate `payflow_test` database):
+**Конфігурація і секрети.** Секрет для підпису webhooks і облікові дані Postgres читаються
+зі змінних оточення. У `docker-compose.yml` кожна з них має значення за замовчуванням
+(`${VAR:-default}`) з локальними/тестовими значеннями, зокрема опублікований PayFlow тестовий
+секрет `whsec_test_123`. Це зроблено лише для того, щоб сервіс запускався однією командою,
+як вимагає умова. У звичайному проєкті ці значення зберігалися б тільки в `.env`, який не
+потрапляє в git (або в менеджері секретів), без значень за замовчуванням у compose-файлі.
+Список змінних є в [`.env.example`](.env.example). Щоб їх перевизначити:
+`cp .env.example .env`, відредагувати, і значення з `.env` матимуть пріоритет.
+
+### Тести
 
 ```bash
 docker compose --profile test run --rm tests
 ```
 
-This runs 127 tests with coverage, and fails below 90% (currently about 98%).
-- `tests/unit`: money parsing, signatures, schemas, status derivation, the Redis shield and its circuit breaker.
-- `tests/integration`: the HTTP contract, idempotency, every delivery order, lifecycle edge cases, concurrency and spam, replay, and migration/model drift.
+Запускає 127 тестів на справжніх Postgres і Redis, в окремій базі `payflow_test`. Запуск
+падає, якщо покриття опускається нижче 90% (зараз близько 98%).
 
-**End-to-end** with the real `PayFlowEventsSender.py`, against the running service:
+- `tests/unit`: розбір сум, підписи, схеми подій, визначення статусу, Redis-захист і його circuit breaker.
+- `tests/integration`: HTTP-контракт, ідемпотентність, будь-який порядок доставки, граничні випадки життєвого циклу, паралельність і спам, повторне застосування подій (replay), відповідність міграцій моделям.
+
+### End-to-end із відправником PayFlow
+
+Коли сервіс запущено:
 
 ```bash
 python scripts/e2e.py --sender ../PayFlow/PayFlowEventsSender.py
 ```
 
-This delivers `happy_path.json` plus `scenarios/` (out of order, duplicates, edge cases) twice each, then checks every balance and transaction against `scenarios/expected.json`. It uses only the standard library.
+Скрипт двічі відправляє `happy_path.json` і файли зі `scenarios/` (події не по порядку,
+дублікати, граничні випадки), а потім звіряє кожен баланс і кожну транзакцію з
+`scenarios/expected.json`. Використовує лише стандартну бібліотеку.
 
-**Replaying stored events** (see "quarantine" below):
+### CI
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) запускає три задачі на кожен push і pull request:
+- лінтер (ruff)
+- набір тестів у Docker
+- end-to-end прогін на стеку, запущеному через `docker compose up`
+
+### Повторне застосування збережених подій
+
+Див. «карантин» у розділі 3.
 
 ```bash
-docker compose exec app flask --app app events replay --status rejected   # or --status ignored, --type T, --id E
+docker compose exec app flask --app app events replay --status rejected   # або: --status ignored, --type T, --id E
 ```
 
 ---
 
-## 2. Assumptions (where the assignment doesn't say)
+## 2. Які припущення я зробив там, де умова чогось не каже
 
-| Topic | Assumption |
+| Тема | Припущення |
 |---|---|
-| Who decides | PayFlow has already approved everything we hear about. We **record** facts and never refuse spending. `available` may therefore go negative. |
-| Account visibility | The account row is created by whichever event mentions it first (in any order). The API returns 404 until the first `account.funded` arrives, matching "the first `account.funded` creates the account". |
-| Currency | Pinned by the first event seen for the account. An event in another currency is quarantined. |
-| One capture per authorization | As in the documented lifecycle. A repeat with the same amount is a no-op; a different amount is quarantined (we can't know which is right). |
-| Capture vs. reversal | If PayFlow reports both for one authorization (a contradiction), **capture wins** in either arrival order, because money really moved. A reversal arriving after a capture is quarantined; a capture arriving after a reversal is applied and logged at ERROR. |
-| Refunds | Verified PayFlow facts: all are counted (`refunded` = sum of all refunds, as specified). This includes refunds that arrive before their capture, or that total more than the captured amount; those are only logged at WARNING. A refund is identified by `refund_id`, so the same refund under a new event id counts once. |
-| Unknown fields | Extra fields in known event types are ignored (forward compatibility). |
-| Amount format | Non-negative decimal strings with at most 2 decimals (`"10"`, `"10.5"` and `"10.50"` are all fine). JSON numbers, exponents, signs and more than 2 decimals are rejected. We never silently round money. |
-| `authorized_amount` | `null` in `/transactions` until `authorization.created` arrives (e.g. when the capture came first). `created_at` behaves the same way. |
-| Ordering of `/transactions` | By the authorization's `created_at` ascending (or first-seen time while that's unknown), then id. |
-| Read endpoints | Unauthenticated, no pagination (as the assignment allows). |
+| Хто приймає рішення | PayFlow уже схвалив усе, про що ми дізнаємося. Ми **фіксуємо** факти й ніколи не відхиляємо витрати, тому `available` може стати від'ємним. |
+| Коли рахунок існує | Рядок рахунку створюється першою подією, яка його згадує, у будь-якому порядку. API повертає 404, доки не надійде перший `account.funded`, відповідно до «перша подія `account.funded` створює рахунок». |
+| Валюта | Фіксується першою подією, отриманою для рахунку. Подія в іншій валюті потрапляє в карантин. |
+| Одне списання на авторизацію | Як у задокументованому життєвому циклі. Повтор із тією самою сумою нічого не змінює; інша сума потрапляє в карантин, бо неможливо знати, яка з них правильна. |
+| Списання проти скасування | Якщо PayFlow повідомляє про обидва для однієї авторизації (суперечність), **списання перемагає** за будь-якого порядку надходження, бо гроші справді списано. Скасування після списання потрапляє в карантин; списання після скасування застосовується й логується на рівні ERROR. |
+| Повернення | Перевірені факти від PayFlow, враховуються всі (`refunded` = сума всіх повернень, як в умові). Зокрема й ті, що надходять раніше за списання або в сумі перевищують списану суму; такі лише логуються на рівні WARNING. Повернення визначається за `refund_id`, тому те саме повернення під новим id події враховується один раз. |
+| Невідомі поля | Додаткові поля у відомих типах подій ігноруються, щоб PayFlow міг додавати поля, нічого нам не ламаючи. |
+| Формат сум | Невід'ємні десяткові рядки, щонайбільше 2 знаки після коми (`"10"`, `"10.5"` і `"10.50"` приймаються). JSON-числа, експоненти, знаки й більше 2 знаків відхиляються. Гроші ніколи не округлюються непомітно. |
+| `authorized_amount` | `null` у `/transactions`, доки не надійде `authorization.created` (наприклад, якщо списання прийшло першим). `merchant` і `created_at` поводяться так само. |
+| Порядок у `/transactions` | За `created_at` авторизації за зростанням (або за часом першої події, поки `created_at` невідомий), потім за id. |
+| Ендпоінти читання | Без автентифікації й без пагінації, як дозволяє умова. |
 
 ---
 
-## 3. Key decisions and why
+## 3. Ключові рішення і чому саме так
 
-### 3.1 Idempotency: Postgres is the source of truth, Redis is a fail-open shield
+### 3.1 Обробка рівно один раз: гарантує Postgres, Redis лише пришвидшує
 
-PayFlow delivers **at least once**, possibly **in parallel**, so the same event can arrive many times, even simultaneously.
+PayFlow доставляє події **щонайменше один раз** і, можливо, **паралельно**, тому та сама
+подія може надійти багато разів, навіть одночасно.
 
-**The guarantee comes from Postgres.** Each event is claimed with
-`INSERT INTO webhook_events ... ON CONFLICT (id) DO NOTHING RETURNING id`, **in the same transaction** that applies it to the ledger.
-- If two copies race, the second insert blocks on the unique index until the first transaction ends.
-- If the first committed, the second sees the conflict and answers `duplicate`.
-- If the first crashed and rolled back, the second applies the event.
-- "Seen" and "applied" commit together or not at all.
+**Гарантію дає Postgres.** Кожна подія «закріплюється» запитом
+`INSERT INTO webhook_events ... ON CONFLICT (id) DO NOTHING RETURNING id` **в тій самій
+транзакції**, що й зміни в обліку:
+- Якщо дві копії змагаються, другий insert чекає на унікальному індексі, доки не завершиться перша транзакція.
+- Якщо перша зафіксувалася, друга бачить конфлікт і відповідає `duplicate`.
+- Якщо перша впала й відкотилася, друга застосовує подію.
+- «Побачено» і «застосовано» фіксуються разом або не фіксуються взагалі. Окремий тест обриває обробник посеред запису й доводить, що нічого не втрачається.
 
-There is a test that crashes a handler mid-write and proves nothing is lost.
+**Чому не лише Redis (`SET NX`)?** Redis і Postgres не можуть мати спільну транзакцію:
+- **Спочатку позначити в Redis, потім записати:** збій між цими кроками лишає подію позначеною як «побачена», але не застосованою. Повтор від PayFlow отримує «duplicate», і гроші втрачено.
+- **Спочатку записати, потім позначити:** паралельна копія може проскочити між кроками.
+- **Redis перезапускається або витісняє ключі:** усі позначки зникають.
 
-**Why not Redis alone (`SET NX`)?** Redis and Postgres can't share a transaction.
-- **Mark first, then write.** A crash between the two leaves the event marked "seen" but never applied. The retry is told "duplicate" and the money is lost.
-- **Write first, then mark.** A parallel copy can slip through between the two steps.
-- **Redis restarts or evicts keys.** All the markers are gone.
+**Що робить Redis** ([`app/services/shield.py`](app/services/shield.py)):
+- **Кеш оброблених подій.** Записується лише *після* коміту в Postgres. Дублікати отримують відповідь без звернення до бази, що й важливо при спамі однією подією. У кеші зберігається SHA-256 тіла події, тому той самий id з *іншим* вмістом усе одно доходить до Postgres і позначається (`duplicate_mismatch`, зберігається перша версія).
+- **Блокування на час обробки.** `SET NX PX` для кожного id події. Поки один запит обробляє подію, паралельні копії отримують `409`, і PayFlow повторює їх пізніше, коли вони вже потрапляють у кеш. Потік копій не займає з'єднання з базою. Блокування знімається Lua-скриптом «порівняти й видалити», тому запит ніколи не видаляє чуже блокування.
+- **Відмова у бік коректності (fail-open) з circuit breaker.** Будь-яка помилка Redis означає «без кешу, без блокування», і запит іде в Postgres, який сам по собі повністю коректний. Тести проходять з увімкненим, вимкненим і недоступним Redis. Оскільки невдалий виклик Redis може бути повільним (із зупиненим контейнером кожен DNS-запит тривав близько 3,3 с), після помилки Redis пропускається на 5 с.
 
-**What Redis does do** (`app/services/shield.py`):
-- **Done cache.** Written only *after* the Postgres commit. Duplicates are answered without touching the database, which matters when one event is being spammed.
-  - The cached value is the payload's SHA-256, so a hit requires identical content.
-  - A reused id with *different* content still reaches Postgres, where it's flagged (`duplicate_mismatch`, first version kept).
-- **In-flight lock.** `SET NX PX` per event id. While one request processes an event, concurrent copies get `409` and PayFlow retries them later, when they hit the cache. A flood of copies doesn't hold DB connections. The lock is released with a compare-and-delete Lua script, so we never delete someone else's lock.
-- **Fail-open with a circuit breaker.**
-  - Any Redis error means "no cache, no lock", and the request goes to Postgres, which is fully correct on its own. The tests run with Redis on, off, and unreachable.
-  - A failing Redis call can be slow: with the container stopped, every DNS lookup took about 3.3s, and requests approached PayFlow's 10s limit. So after one failure the shield skips Redis for 5s.
+### 3.2 Доставка не по порядку: факти замість переходів станів
 
-**Why the event id and not a payload hash as the dedup key?** PayFlow's contract is that a repeated delivery has the same `id`. A hash only matches identical content: a resend with a changed field, key order or whitespace would be applied twice. The hash is kept as an integrity check instead.
+Кожна авторизація — один рядок із ключем `authorization_id`.
+- **Кожен тип події заповнює лише свої колонки:** `created` — авторизовану суму й продавця, `captured` — списану суму, `reversed` — скасування.
+- **Статус визначається тим, які факти є:** списано, інакше скасовано, інакше заблоковано. Від порядку надходження він не залежить.
 
-### 3.2 Out-of-order delivery: facts, not state transitions
+Тож `captured`, що прийшов раніше за `created`, просто створює рядок раніше, а пізній
+`created` дозаповнює *той самий* рядок. Це перевіряють два види тестів:
+- тест на Hypothesis доставляє події happy path у випадкових порядках і щоразу вимагає точного очікуваного результату
+- рандомізований тест надсилає перемішані, продубльовані й паралельні доставки для кількох рахунків і порівнює кожен рахунок із незалежною еталонною моделлю правил обліку
 
-Each authorization is one row keyed by `authorization_id`.
-- **Each event type fills in only its own columns.** `created` sets the authorized amount and merchant, `captured` sets the captured amount, and `reversed` sets the reversal.
-- **Status is derived from which facts exist:** captured, else reversed, else pending. It never depends on arrival order.
+### 3.3 Баланс рахується під час читання
 
-So `captured` arriving before `created` simply creates the row early; the late `created` fills in the rest on the *same* row.
+`available = funded − pending − captured + refunded` — один SQL-запит із `SUM` по рядках,
+кожен із яких записано рівно один раз. Немає лічильників, які могли б розійтися з даними
+або постраждати від гонок. Ціна — трохи важче читання, що прийнятно на такому масштабі
+(див. розділ 5).
 
-Two kinds of test check this:
-- a Hypothesis test delivers random permutations of the happy path (75 per run, out of 9! possible orders) and requires the exact expected result every time
-- a randomized test checks shuffled, duplicated, parallel deliveries across several accounts against an independent reference model of the accounting rules
+### 3.4 Паралельність: одне блокування на рахунок
 
-### 3.3 Balance computed at read time
+Кожна транзакція з подією блокує рядок свого рахунку (`SELECT ... FOR UPDATE`):
+- Події одного рахунку застосовуються по черзі, тому оновлення рядків авторизацій безпечне.
+- Різні рахунки обробляються паралельно.
+- Кожна транзакція спершу блокує id події, а потім рівно один рахунок, завжди в такому порядку, тому взаємних блокувань (deadlock) не має бути. Якщо таке все ж трапиться (`40P01`/`40001`), транзакція повторюється.
+- `statement_timeout` (5 с) і `lock_timeout` (3 с) тримають кожну відповідь у межах 10-секундного ліміту PayFlow. Якщо база недоступна чи повільна, повертається `503`, і PayFlow повторить пізніше.
 
-`available = funded − pending − captured + refunded` is a single SQL statement of `SUM`s over rows that were each written exactly once. There are no running counters that could drift or race. The trade-off is read cost, which is fine at this scale (see section 5).
+### 3.5 Коди відповідей: не-2xx лише для того, що повтор може виправити
 
-### 3.4 Concurrency: one lock per account
+PayFlow повторює будь-яку не-2xx відповідь протягом 72 годин, тож кожен код обрано з
+урахуванням цього:
 
-Every event transaction locks its account row (`SELECT ... FOR UPDATE`).
-- Events of one account apply one at a time, so read-modify-write on authorization rows is safe.
-- Different accounts run in parallel.
-- Each transaction locks the event key and then exactly one account, always in that order, so deadlocks shouldn't happen. If one does (`40P01`/`40001`), it is retried.
-- `statement_timeout` (5s) and `lock_timeout` (3s) keep every response under PayFlow's 10s limit.
-- A DB that is down or slow returns `503`, so PayFlow retries later.
-
-### 3.5 Response codes: only what a retry can't fix gets a non-2xx
-
-PayFlow retries anything non-2xx for 72h, so status codes are chosen with that in mind:
-
-| Situation | Response | Stored |
+| Ситуація | Відповідь | Зберігається |
 |---|---|---|
-| Applied | `200 {"status":"ok","outcome":"applied"}` | yes |
-| Duplicate (same id, or the same fact under a new id) | `200` `duplicate` | n/a |
-| Same id, different content | `200` `duplicate_mismatch`, WARNING log | first version |
-| Unknown event type | `200` `ignored` | yes, replayable |
-| Signed but invalid data, wrong currency, or a contradiction | `200` `quarantined`, ERROR log | yes, with reason, replayable |
-| Bad or missing signature | `401` | no |
-| Not JSON / no `id` or `type` | `400` (we can't even dedupe it) | no |
-| Body over 64 KB | `413` | no |
-| Same event in flight elsewhere | `409` + `Retry-After` | n/a |
-| DB down, timeout or pool exhausted | `503` | rolled back |
+| Застосовано | `200 {"status":"ok","outcome":"applied"}` | так |
+| Дублікат (той самий id або той самий факт під новим id) | `200` `duplicate` | — |
+| Той самий id, інший вміст | `200` `duplicate_mismatch`, лог WARNING | перша версія |
+| Невідомий тип події | `200` `ignored` | так, можна застосувати повторно |
+| Підписана, але з некоректними даними, іншою валютою чи суперечністю | `200` `quarantined`, лог ERROR | так, із причиною, можна застосувати повторно |
+| Неправильний або відсутній підпис | `401` | ні |
+| Не JSON або немає `id` / `type` | `400` (неможливо навіть дедуплікувати) | ні |
+| Тіло понад 64 КБ | `413` | ні |
+| Та сама подія вже обробляється іншим запитом | `409` + `Retry-After` | — |
+| База недоступна, таймаут або вичерпано пул з'єднань | `503` | відкочено |
 
-**Quarantine** means the event is stored with `status='rejected'` and a human-readable reason, changes no balance, and gets `200`, because a retry would only repeat the same bad data for 72 hours.
+**Карантин** означає, що подію збережено зі `status='rejected'` і зрозумілою причиною,
+вона не змінює жодного балансу й отримує `200`: повтор лише 72 години повторював би ті самі
+некоректні дані.
 
-**Ignored and rejected events are stored on purpose.** After a `200` PayFlow never resends, so storing them is the only way to recover. Once a fix or a new handler ships, `flask events replay` re-applies them through the same code path.
+**Проігноровані й відхилені події зберігаються навмисно.** Після `200` PayFlow більше не
+надсилає подію, тому зберегти її — єдиний спосіб відновитися. Коли вийде виправлення чи
+новий обробник, `flask events replay` застосує їх тим самим кодом.
 
-### 3.6 Other choices
+### 3.6 Інші рішення
 
-- **The signature is verified on the raw body**, before parsing, with `hmac.compare_digest`. Re-serialized JSON would not match.
-- **Money is `Decimal` / `NUMERIC(18,2)` end to end**, never float.
-- **Synchronous processing.** Applying an event is a few milliseconds of SQL, far under 10s, and reads are immediately consistent with what was acknowledged. Throughput comes from gunicorn (4 workers × 8 threads). A queue only becomes worth it under much bigger load (see section 5).
-- **Layers:** `api/` (HTTP only) → `services/` (ingest, one handler module per event type, ledger queries, shield) → `models/` (tables).
-  - `schemas/` (pydantic) validates incoming JSON. `core/` holds framework-free helpers.
-  - Adding an event type means adding one handler module and one registry line.
-
----
-
-## 4. Not done, on purpose
-
-- **Async queue / worker.** Not needed at this scale, and it would make `GET` endpoints eventually consistent. See section 5 for when to add it.
-- **Authentication on the `GET` endpoints, and pagination.** Out of scope per the assignment.
-- **Multi-currency accounts.** The docs say one currency per account.
-- **An admin UI or API for quarantined events.** The CLI plus SQL are enough here.
-- **Metrics endpoint and alerting.** Logs are structured JSON with `event_id`, `event_type`, `outcome` and `duration_ms`, so they're ready to be turned into metrics.
-- **Refunds detail in `/transactions`.** Only the per-authorization total is shown, as in the spec.
+- **Підпис перевіряється по сирому тілу запиту**, до розбору JSON, через `hmac.compare_digest` (порівняння за сталий час, тож час відповіді не видає, яку частину підробленого підпису вгадано). Повторно серіалізований JSON не збігся б.
+- **Гроші — `Decimal` / `NUMERIC(18,2)` на всьому шляху**, ніколи не float.
+- **Синхронна обробка.** Застосування події — кілька мілісекунд SQL, значно менше за 10 с, і читання одразу узгоджене з тим, що підтверджено. Пропускну здатність дає gunicorn (4 воркери × 8 потоків). Черга виправдана лише за значно більшого навантаження (див. розділ 5).
+- **Шари:** `api/` (лише HTTP) → `services/` (прийом подій, окремий модуль-обробник на кожен тип події, запити обліку, Redis-захист) → `models/` (таблиці).
+  - `schemas/` (pydantic) валідує вхідний JSON, `core/` містить допоміжний код, незалежний від фреймворку.
+  - Новий тип події — це один модуль-обробник і один рядок у реєстрі.
 
 ---
 
-## 5. Before production I would
+## 4. Що не встиг або свідомо не робив
 
-1. **Manage secrets properly.** Remove the defaults from `docker-compose.yml` and make the variables required (`${VAR:?}`), so nothing starts with test credentials. Keep the webhook secret in a secret manager and support **two active secrets** for rotation. Ask PayFlow for a **timestamp in the signature** to block replays of old signed requests.
-2. **Add observability.** Metrics for events by outcome, latency, 409/503 rates and Redis breaker state. Alerts on any quarantined event, on refunds exceeding captures, and on anomalies such as a capture after a reversal.
-3. **Reconcile.** Run a periodic job comparing our balances with PayFlow's API, if one exists. Webhooks alone can't prove we missed nothing.
-4. **Scale the write path when needed.** Add an inbox table plus workers (ack fast, apply asynchronously, partitioned by account to keep per-account ordering cheap). Also keep materialized balance counters instead of `SUM` on every read.
-5. **Plan for data growth.** Partition and archive `webhook_events`, with a retention policy that is longer than PayFlow's 72h retry window and meets audit needs.
-6. **Make infrastructure highly available.** Managed Postgres with backups and PITR, Redis with a replica (it's only an optimization, but a flapping one adds latency), PgBouncer in front of Postgres.
-7. **Harden the edge.** Rate limiting and IP allow-listing for PayFlow at the gateway, authentication on the read API, and request-id propagation in logs.
-8. **Ship safely.** CI running lint, tests and the e2e script, plus migrations run as a separate deploy step rather than on container start.
+**Не встиг:**
+- **Навантажувальне тестування.** Паралельність перевірена на коректність (100 паралельних копій однієї події, сотні перемішаних паралельних доставок), але пропускну здатність і затримки під тривалим навантаженням я не вимірював.
+- **Метрики й алерти.** Логи структуровані в JSON (`event_id`, `event_type`, `outcome`, `duration_ms`) і готові до перетворення на метрики, але ендпоінта для Prometheus не робив.
+- **Однорідні логи.** Access-лог gunicorn — звичайний текст поруч із JSON-логами застосунку.
+- **Специфікація API (OpenAPI).** Ендпоінти описані лише в цьому README.
+
+**Свідомо не робив:**
+- **Асинхронну чергу / воркер.** На такому масштабі не потрібно, а `GET`-ендпоінти стали б узгодженими лише з часом (eventual consistency).
+- **Автентифікацію `GET`-ендпоінтів і пагінацію.** Поза межами умови.
+- **Рахунки з кількома валютами.** За документацією рахунок має одну валюту.
+- **Адмін-інтерфейс чи API для подій у карантині.** Тут достатньо CLI для replay і SQL.
+- **Деталізацію повернень у `/transactions`.** Лише загальна сума по авторизації, як в умові.
+
+---
+
+## 5. Що змінив би або додав перед запуском у продакшен
+
+1. **Секрети.** Прибрати значення за замовчуванням із `docker-compose.yml` і зробити змінні обов'язковими (`${VAR:?}`), щоб нічого не могло запуститися з тестовими обліковими даними. Тримати секрет webhooks у менеджері секретів і підтримувати **два активні секрети** для ротації. Попросити PayFlow додати **часову мітку в підпис**, щоб блокувати повторне надсилання старих підписаних запитів.
+2. **Спостережуваність.** Метрики подій за результатом, затримки, частки 409/503 і стан circuit breaker для Redis. Алерти на кожну подію в карантині, на повернення, що перевищують списання, і на аномалії на кшталт списання після скасування.
+3. **Зростання даних.** Партиціювання й архівування `webhook_events` із терміном зберігання, довшим за 72-годинне вікно повторів PayFlow і достатнім для аудиту.
+4. **Захищений периметр.** Обмеження частоти запитів і список дозволених IP для PayFlow на шлюзі, автентифікація API читання й наскрізні request id у логах.
+5. **Безпечні деплої.** Розширити CI до CD: збирати й публікувати образ, а міграції запускати окремим кроком деплою, а не під час старту контейнера.
