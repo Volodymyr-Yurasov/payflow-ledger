@@ -18,12 +18,13 @@ def create_app(config: Config | None = None) -> Flask:
     app.json.sort_keys = False
     app.extensions["payflow"] = build_services(config)
 
-    from app.api import accounts, health, webhooks
+    from app.api import accounts, docs, health, webhooks
     from app.cli.replay import events_cli
 
     app.register_blueprint(webhooks.bp)
     app.register_blueprint(accounts.bp)
     app.register_blueprint(health.bp)
+    app.register_blueprint(docs.bp)
     app.cli.add_command(events_cli)
     register_error_handlers(app)
     return app

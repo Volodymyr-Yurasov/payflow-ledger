@@ -6,6 +6,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import yaml
+from jsonschema import Draft202012Validator
+
+from app.api.docs import SPEC_PATH
 from app.core.signature import compute_signature
 
 SECRET = "whsec_test_123"
@@ -37,6 +41,21 @@ EXPECTED_TRANSACTIONS = [
     _tx("auth_102", "Hilton", "captured", "300.00", "300.00", "0.00", "2026-10-19T10:10:00Z"),
     _tx("auth_103", "Slack", "pending", "15.00", "0.00", "0.00", "2026-10-19T12:30:00Z"),
 ]
+
+
+def load_spec() -> dict[str, Any]:
+    return yaml.safe_load(SPEC_PATH.read_text(encoding="utf-8"))
+
+
+def assert_matches_schema(instance: Any, schema_name: str) -> None:
+    """Validate a response body against components/schemas/<schema_name> of the spec.
+
+    OpenAPI 3.1 schemas are JSON Schema 2020-12, so a plain validator works once the
+    components are reachable from the root for $ref resolution.
+    """
+    spec = load_spec()
+    schema = {"$ref": f"#/components/schemas/{schema_name}", "components": spec["components"]}
+    Draft202012Validator(schema).validate(instance)
 
 
 def encode(event: dict[str, Any]) -> bytes:

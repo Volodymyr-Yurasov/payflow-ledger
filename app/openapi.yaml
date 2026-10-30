@@ -1,0 +1,353 @@
+openapi: 3.1.0
+info:
+  title: PayFlow Ledger
+  version: 0.1.0
+  description: |
+    Receives PayFlow corporate-card webhooks and keeps per-account accounting.
+
+    PayFlow delivers each event at least once, in any order and possibly in parallel;
+    every event is still applied exactly once. Any non-2xx answer makes PayFlow retry
+    for 72 hours, so only problems a retry can fix get a non-2xx response.
+servers:
+  - url: http://localhost:8000
+tags:
+  - name: webhooks
+    description: Events from PayFlow
+  - name: accounts
+    description: Balances and transactions
+  - name: ops
+    description: Operational endpoints
+
+paths:
+  /webhooks:
+    post:
+      tags: [webhooks]
+      operationId: receiveWebhook
+      summary: Receive a PayFlow event
+      description: |
+        Verifies the signature over the raw body, deduplicates by event `id` and applies
+        the event to the ledger in one transaction.
+
+        Signed events that can't be applied (invalid data, wrong currency, contradicting
+        known facts) are stored and quarantined, and still answered with 200: retrying
+        wouldn't fix them. Unknown event types are stored and ignored.
+      security:
+        - payflowSignature: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Event"
+            example:
+              id: evt_0002
+              type: authorization.created
+              created_at: "2026-10-19T10:01:00Z"
+              data:
+                account_id: acc_1
+                authorization_id: auth_100
+                amount: "125.50"
+                currency: USD
+                merchant: AWS
+      responses:
+        "200":
+          description: Accepted. `outcome` says what happened to the event.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookAck"
+        "400":
+          description: Not JSON, or no string `id` / `type` (the event can't even be deduplicated).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid `X-PayFlow-Signature`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: The same event is being processed by another request right now.
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying.
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: Body larger than 64 KB.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /accounts/{account_id}/balance:
+    get:
+      tags: [accounts]
+      operationId: getBalance
+      summary: Account balance
+      description: |
+        `available = funded − pending − captured + refunded`. It may be negative:
+        PayFlow approves spending on its own, the ledger only records it.
+      parameters:
+        - $ref: "#/components/parameters/AccountId"
+      responses:
+        "200":
+          description: Balance of the account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Balance"
+              example:
+                account_id: acc_1
+                currency: USD
+                available: "585.00"
+                pending: "15.00"
+        "404":
+          $ref: "#/components/responses/AccountNotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /accounts/{account_id}/transactions:
+    get:
+      tags: [accounts]
+      operationId: listTransactions
+      summary: Authorizations of the account with their current state
+      description: Ordered by `created_at` ascending. No pagination.
+      parameters:
+        - $ref: "#/components/parameters/AccountId"
+      responses:
+        "200":
+          description: All authorizations of the account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TransactionList"
+        "404":
+          $ref: "#/components/responses/AccountNotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /health:
+    get:
+      tags: [ops]
+      operationId: health
+      summary: Health check
+      description: Fails only when the database is unreachable. Redis is optional, so its state is informational.
+      responses:
+        "200":
+          description: The service and its database are up.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+components:
+  securitySchemes:
+    payflowSignature:
+      type: apiKey
+      in: header
+      name: X-PayFlow-Signature
+      description: "`hex(HMAC_SHA256(secret, raw_body))` over the exact request bytes."
+
+  parameters:
+    AccountId:
+      name: account_id
+      in: path
+      required: true
+      schema:
+        type: string
+      example: acc_1
+
+  responses:
+    AccountNotFound:
+      description: Unknown account, or one that hasn't received its first `account.funded` yet.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unavailable:
+      description: Database unavailable or too slow; safe to retry.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InternalError:
+      description: Unexpected error; nothing was committed, safe to retry.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    InputAmount:
+      description: Non-negative decimal string with at most 2 decimal places.
+      type: string
+      pattern: '^\d{1,16}(\.\d{1,2})?$'
+      examples: ["125.50"]
+    Amount:
+      description: Decimal string with exactly 2 decimal places (may be negative for `available`).
+      type: string
+      pattern: '^-?\d+\.\d{2}$'
+      examples: ["585.00"]
+    Currency:
+      description: ISO 4217 code.
+      type: string
+      pattern: '^[A-Z]{3}$'
+      examples: [USD]
+
+    Event:
+      type: object
+      required: [id, type]
+      properties:
+        id:
+          type: string
+          description: Unique event id; a repeated delivery has the same id.
+          examples: [evt_0002]
+        type:
+          type: string
+          description: Event type. Unknown types are accepted and ignored.
+          examples:
+            - account.funded
+            - authorization.created
+            - authorization.captured
+            - authorization.reversed
+            - refund.created
+        created_at:
+          type: string
+          format: date-time
+          description: When the event happened in PayFlow (UTC).
+        data:
+          description: Depends on `type`.
+          anyOf:
+            - $ref: "#/components/schemas/AccountFundedData"
+            - $ref: "#/components/schemas/AuthorizationCreatedData"
+            - $ref: "#/components/schemas/AuthorizationChangedData"
+            - $ref: "#/components/schemas/RefundCreatedData"
+    AccountFundedData:
+      title: account.funded
+      type: object
+      required: [account_id, amount, currency]
+      properties:
+        account_id: {type: string}
+        amount: {$ref: "#/components/schemas/InputAmount"}
+        currency: {$ref: "#/components/schemas/Currency"}
+    AuthorizationCreatedData:
+      title: authorization.created
+      type: object
+      required: [account_id, authorization_id, amount, currency, merchant]
+      properties:
+        account_id: {type: string}
+        authorization_id: {type: string}
+        amount: {$ref: "#/components/schemas/InputAmount"}
+        currency: {$ref: "#/components/schemas/Currency"}
+        merchant: {type: string}
+    AuthorizationChangedData:
+      title: authorization.captured / authorization.reversed
+      description: For `captured`, `amount` is the amount actually charged; for `reversed`, the released block.
+      type: object
+      required: [account_id, authorization_id, amount, currency]
+      properties:
+        account_id: {type: string}
+        authorization_id: {type: string}
+        amount: {$ref: "#/components/schemas/InputAmount"}
+        currency: {$ref: "#/components/schemas/Currency"}
+    RefundCreatedData:
+      title: refund.created
+      type: object
+      required: [account_id, refund_id, authorization_id, amount, currency]
+      properties:
+        account_id: {type: string}
+        refund_id: {type: string}
+        authorization_id: {type: string}
+        amount: {$ref: "#/components/schemas/InputAmount"}
+        currency: {$ref: "#/components/schemas/Currency"}
+
+    WebhookAck:
+      type: object
+      required: [status, outcome]
+      additionalProperties: false
+      properties:
+        status:
+          const: ok
+        outcome:
+          type: string
+          enum: [applied, duplicate, duplicate_mismatch, ignored, quarantined]
+          description: |
+            - `applied`: the event changed the ledger.
+            - `duplicate`: already seen (same id, or the same fact under a new id).
+            - `duplicate_mismatch`: same id with different content; the first version is kept.
+            - `ignored`: unknown event type, stored for replay.
+            - `quarantined`: signed but can't be applied; stored with the reason.
+
+    Balance:
+      type: object
+      required: [account_id, currency, available, pending]
+      additionalProperties: false
+      properties:
+        account_id: {type: string}
+        currency: {$ref: "#/components/schemas/Currency"}
+        available: {$ref: "#/components/schemas/Amount"}
+        pending: {$ref: "#/components/schemas/Amount"}
+
+    Transaction:
+      type: object
+      required: [authorization_id, merchant, currency, status, authorized_amount,
+                 captured_amount, refunded_amount, created_at]
+      additionalProperties: false
+      properties:
+        authorization_id: {type: string}
+        merchant:
+          type: [string, "null"]
+          description: "`null` until `authorization.created` arrives."
+        currency: {$ref: "#/components/schemas/Currency"}
+        status:
+          type: string
+          enum: [pending, captured, reversed]
+        authorized_amount:
+          type: [string, "null"]
+          pattern: '^\d+\.\d{2}$'
+          description: "`null` until `authorization.created` arrives."
+        captured_amount: {$ref: "#/components/schemas/Amount"}
+        refunded_amount: {$ref: "#/components/schemas/Amount"}
+        created_at:
+          type: [string, "null"]
+          format: date-time
+          description: "`null` until `authorization.created` arrives."
+    TransactionList:
+      type: object
+      required: [items]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items: {$ref: "#/components/schemas/Transaction"}
+
+    Health:
+      type: object
+      required: [status, redis]
+      additionalProperties: false
+      properties:
+        status:
+          const: ok
+        redis:
+          type: string
+          enum: [ok, unavailable, disabled]
+
+    Error:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error: {type: string}
